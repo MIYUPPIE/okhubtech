@@ -1,0 +1,38 @@
+{
+  "name": "@okhub/video-store",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone storefront + Paystack checkout + gated delivery for OKHub's technology/ecommerce video products. Deploys independently of okhubtech.com.",
+  "scripts": {
+    "dev": "next dev -p 4100",
+    "build": "next build",
+    "start": "next start -p 4100",
+    "lint": "eslint",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "seed:demo": "node --experimental-strip-types prisma/seed.ts",
+    "test": "node --test --experimental-strip-types tests/*.test.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "cloudinary": "^2.5.1",
+    "next": "16.3.4",
+    "nodemailer": "^9.1.1",
+    "prisma": "^5.22.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/nodemailer": "^7.0.4",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "typescript": "^5"
+  }
+}

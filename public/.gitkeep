@@ -1,0 +1,6 @@
+This service has no static assets of its own yet — product thumbnails and
+videos come from Cloudinary or an external link (see lib/variant.ts). This
+file only keeps the directory present after a fresh clone: the Dockerfile
+does `COPY --from=builder /app/public ./public`, which fails on a missing
+source path, so removing this without adding a real asset would break the
+Docker build.

@@ -1,0 +1,22 @@
+node_modules
+.next
+out
+build
+dist
+
+.env
+.env.local
+.env*.local
+
+*.tsbuildinfo
+next-env.d.ts
+
+# SQLite dev database and its WAL/journal files — never ship real order data
+# in the repo.
+prisma/*.db
+prisma/*.db-journal
+prisma/*.db-wal
+prisma/*.db-shm
+
+npm-debug.log*
+.DS_Store

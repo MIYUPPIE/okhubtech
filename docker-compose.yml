@@ -1,0 +1,17 @@
+services:
+  video-store:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "4100:4100"
+    env_file:
+      - .env
+    environment:
+      # Overrides whatever DATABASE_URL is in .env — the SQLite file must live
+      # on the mounted volume below, or every deploy loses the database.
+      DATABASE_URL: "file:/app/data/prod.db"
+    volumes:
+      - video-store-data:/app/data
+
+volumes:
+  video-store-data:

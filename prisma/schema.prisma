@@ -1,0 +1,151 @@
+// Video store: catalog + checkout + gated delivery.
+//
+// SQLite by default — this is a small, single-instance storefront on its own
+// host, and SQLite needs zero infrastructure to run there. If this ever needs
+// multiple app instances writing concurrently, switch `provider` to
+// "postgresql", point DATABASE_URL at a real Postgres instance, and rerun
+// `npm run prisma:migrate` — nothing else in this schema depends on SQLite.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Prisma's SQLite connector has no enum support (this schema tried it first —
+// see the "Error validating: ... does not support enums" failure it produces
+// on `prisma generate`), so OrderStatus ("PENDING" | "PAID" | "FAILED" |
+// "ABANDONED") and DeliveryMethod ("DOWNLOAD" | "EMAIL") are plain strings,
+// validated at the application boundary instead: lib/checkout.ts's
+// checkoutInputSchema for what comes in, and lib/fulfillment.ts as the only
+// place status is ever written.
+
+/// A sellable video. The catalog itself — title, description, thumbnail.
+/// Pricing and the actual deliverable live one level down, on Variant, because
+/// one video can be sold at more than one tier (resolution, raw vs edited,
+/// with/without source files) at different prices.
+model Product {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  title       String
+  description String
+  /// Cloudinary public id (image) or a plain https URL, shown on the storefront.
+  thumbnailUrl String
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  variants    Variant[]
+
+  @@index([active])
+}
+
+/// A purchasable edition of a Product: a price, and exactly one way to resolve
+/// the actual deliverable — either a Cloudinary asset (cloudinaryPublicId set)
+/// or an externally hosted file such as a Google Drive / Dropbox share link
+/// (externalAssetUrl set). Application code enforces "exactly one of the two";
+/// see lib/variant.ts#assertValidAsset and tests/variant.test.ts.
+model Variant {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// Smallest currency unit (kobo for NGN), matching how Paystack itself bills.
+  priceKobo   Int
+  currency    String   @default("NGN")
+
+  cloudinaryPublicId   String?
+  cloudinaryResourceType String @default("video")
+  externalAssetUrl     String?
+
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  orders      Order[]
+
+  @@index([productId])
+}
+
+/// One purchase of one variant. No multi-item cart: the storefront sells one
+/// video edition per checkout, which is the whole of what was asked for.
+/// Title/name/price are snapshotted at purchase time so a later catalog edit
+/// (price change, rename) never rewrites what a past order says the buyer paid for.
+model Order {
+  id              String         @id @default(cuid())
+  reference       String         @unique
+  /// "PENDING" | "PAID" | "FAILED" | "ABANDONED" — see the note above Product.
+  status          String         @default("PENDING")
+
+  variantId       String
+  variant         Variant        @relation(fields: [variantId], references: [id])
+  productTitle    String
+  variantName     String
+  amountKobo      Int
+  currency        String         @default("NGN")
+
+  customerEmail   String
+  customerName    String?
+  /// "DOWNLOAD" | "EMAIL" — see the note above Product.
+  deliveryMethod  String
+
+  paystackAuthorizationUrl String?
+  paystackAccessCode      String?
+  paidAt          DateTime?
+
+  grants          DeliveryGrant[]
+  webhookEvents   WebhookEvent[]
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([status])
+  @@index([customerEmail])
+}
+
+/// A token-gated right to download the deliverable behind a paid order.
+/// The buyer never sees the raw asset URL — only /download/[token], which
+/// checks expiry and use count here before redirecting to the real asset.
+model DeliveryGrant {
+  id        String       @id @default(cuid())
+  token     String       @unique
+  orderId   String
+  order     Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  maxUses   Int          @default(5)
+  useCount  Int          @default(0)
+  expiresAt DateTime
+  createdAt DateTime     @default(now())
+  accessLogs AccessLog[]
+
+  @@index([orderId])
+}
+
+model AccessLog {
+  id        String        @id @default(cuid())
+  grantId   String
+  grant     DeliveryGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  ip        String?
+  userAgent String?
+  createdAt DateTime      @default(now())
+
+  @@index([grantId])
+}
+
+/// Every Paystack webhook delivery, kept for idempotency and for debugging a
+/// disputed payment. transactionId is Paystack's own `data.id`, which is
+/// stable across retried webhook deliveries for the same event.
+model WebhookEvent {
+  id            String    @id @default(cuid())
+  eventType     String
+  transactionId Int
+  reference     String
+  rawPayload    String
+  orderId       String?
+  order         Order?    @relation(fields: [orderId], references: [id])
+  processedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@unique([eventType, transactionId])
+}

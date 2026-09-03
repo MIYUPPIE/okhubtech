@@ -1,0 +1,50 @@
+# Standalone compose file for the "Cloudflare DNS proxy (orange cloud) in
+# front of a VPS" deployment — Caddy terminates TLS on 80/443 and is the
+# only thing reachable from outside; video-store itself is not published to
+# the host at all (`expose`, not `ports`), only reachable over the compose
+# network from Caddy. Deliberately a separate file from docker-compose.yml
+# rather than an override, so local/dev usage (`docker compose up`, plain
+# HTTP on :4100) keeps working exactly as it does today.
+#
+#   cp .env.example .env   # fill in real values, and set APP_URL to
+#                           # https://<your domain> — see README
+#   edit Caddyfile          # replace the placeholder domain
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Then in Cloudflare: SSL/TLS mode = Full (not Flexible — see Caddyfile's
+# comment for why), DNS A record for your domain -> this VPS's IP, proxied
+# (orange cloud) on. On the VPS itself, only allow 80/443 in from the
+# internet (ufw/firewalld) — Docker's default bridge networking means
+# video-store is unreachable from outside the host regardless, but a host
+# firewall is standard VPS hardening on top of that, not a replacement for it.
+
+services:
+  video-store:
+    build: .
+    restart: unless-stopped
+    expose:
+      - "4100"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "file:/app/data/prod.db"
+    volumes:
+      - video-store-data:/app/data
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - video-store
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  video-store-data:
+  caddy-data:
+  caddy-config:
