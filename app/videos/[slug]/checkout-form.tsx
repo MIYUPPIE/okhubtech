@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { formatMoney } from "@/lib/money";
+import { extractErrorMessage } from "@/lib/api-error";
 
 type VariantOption = {
   id: string;
@@ -29,11 +30,13 @@ export default function CheckoutForm({ variants }: { variants: VariantOption[] }
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ variantId, deliveryMethod, email, name: name || undefined }),
       });
-      const body = await res.json();
+      const body: unknown = await res.json();
       if (!res.ok) {
-        throw new Error(body?.error ?? "Could not start checkout.");
+        throw new Error(extractErrorMessage(body, "Could not start checkout."));
       }
-      window.location.href = body.authorizationUrl;
+      // Our own /api/checkout contract on success — see app/api/checkout/route.ts.
+      const { authorizationUrl } = body as { authorizationUrl: string };
+      window.location.href = authorizationUrl;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
       setSubmitting(false);

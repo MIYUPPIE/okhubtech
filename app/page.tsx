@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { formatMoney } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
 export default async function StorefrontPage() {
+  const prisma = getPrisma();
   const products = await prisma.product.findMany({
     where: { active: true, variants: { some: { active: true } } },
     include: { variants: { where: { active: true }, orderBy: { priceKobo: "asc" } } },

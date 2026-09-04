@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { paystackEnv } from "@/lib/env";
 import { verifyWebhookSignature } from "@/lib/paystack";
 import { fulfillOrder } from "@/lib/fulfillment";
@@ -34,6 +34,8 @@ export async function POST(req: Request) {
     // Not a shape we recognise — acknowledge so Paystack doesn't retry forever.
     return NextResponse.json({ ok: true });
   }
+
+  const prisma = getPrisma();
 
   // (eventType, transactionId) is unique, but a row existing is not the same
   // as the event having actually been handled: if a previous delivery's

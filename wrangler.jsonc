@@ -1,0 +1,42 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"main": ".open-next/worker.js",
+	// Matches the Cloudflare Workers project this repo is already connected
+	// to (confirmed by a build log showing "Worker Name: okhubtech"). This
+	// MUST be the actual name of that Worker — if it's ever renamed on the
+	// Cloudflare dashboard, this has to change too, together with the
+	// self-reference binding below.
+	"name": "okhubtech",
+	"compatibility_date": "2026-09-03",
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	},
+	"services": [
+		{
+			// This is exactly what broke the first deploy attempt: OpenNext's
+			// interactive migrate wizard set "name" above to "okhubtech" (from
+			// the Cloudflare project) but this binding's "service" to
+			// "video-store" (from package.json) — two different values that
+			// are supposed to be identical, since a service binding this app
+			// has never actually needed (see the comment on WORKER_SELF_REFERENCE
+			// in lib/prisma.ts's neighbours — it's optional, used only for a
+			// revalidation edge case and a queue fallback this app doesn't hit)
+			// pointed at a Worker that didn't exist. Kept the same literal
+			// string as "name" above on purpose.
+			"binding": "WORKER_SELF_REFERENCE",
+			"service": "okhubtech"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "video-store",
+			// Placeholder — replace with the real id `wrangler d1 create video-store`
+			// prints (see this service's README, "Database (Cloudflare D1)").
+			"database_id": "REPLACE_WITH_REAL_D1_DATABASE_ID",
+			"migrations_dir": "migrations"
+		}
+	]
+}

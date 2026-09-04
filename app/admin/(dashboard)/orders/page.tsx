@@ -1,9 +1,10 @@
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { formatMoney } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminOrdersPage() {
+  const prisma = getPrisma();
   const orders = await prisma.order.findMany({
     orderBy: { createdAt: "desc" },
     take: 100,

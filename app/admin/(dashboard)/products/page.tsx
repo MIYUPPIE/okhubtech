@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import NewProductForm from "./new-product-form";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminProductsPage() {
+  const prisma = getPrisma();
   const products = await prisma.product.findMany({
     include: { variants: true },
     orderBy: { createdAt: "desc" },

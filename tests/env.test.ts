@@ -2,15 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const ALL_VALID_ENV: Record<string, string> = {
-  DATABASE_URL: "file:./dev.db",
   APP_URL: "http://localhost:4100",
   PAYSTACK_SECRET_KEY: "sk_test_xxx",
   CLOUDINARY_CLOUD_NAME: "demo",
   CLOUDINARY_API_KEY: "123",
   CLOUDINARY_API_SECRET: "secret",
-  SMTP_HOST: "smtp.example.com",
-  SMTP_USER: "user",
-  SMTP_PASSWORD: "password",
+  RESEND_API_KEY: "re_test_xxx",
   EMAIL_FROM: "store@okhub.tech",
   ADMIN_EMAIL: "admin@okhub.tech",
   ADMIN_PASSWORD: "a-long-enough-password",
@@ -42,7 +39,7 @@ async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Pr
   }
 }
 
-test("adminEnv() succeeds on ADMIN_* alone — Cloudinary/SMTP/Paystack being unset must not block admin login", async () => {
+test("adminEnv() succeeds on ADMIN_* alone — Cloudinary/Resend/Paystack being unset must not block admin login", async () => {
   const adminOnly = {
     ADMIN_EMAIL: ALL_VALID_ENV.ADMIN_EMAIL,
     ADMIN_PASSWORD: ALL_VALID_ENV.ADMIN_PASSWORD,
@@ -54,9 +51,7 @@ test("adminEnv() succeeds on ADMIN_* alone — Cloudinary/SMTP/Paystack being un
       CLOUDINARY_CLOUD_NAME: undefined,
       CLOUDINARY_API_KEY: undefined,
       CLOUDINARY_API_SECRET: undefined,
-      SMTP_HOST: undefined,
-      SMTP_USER: undefined,
-      SMTP_PASSWORD: undefined,
+      RESEND_API_KEY: undefined,
       PAYSTACK_SECRET_KEY: undefined,
     },
     async () => {
@@ -76,11 +71,10 @@ test("cloudinaryEnv() throws a descriptive error when its own vars are missing, 
   });
 });
 
-test("smtpEnv() applies the SMTP_PORT default and rejects a malformed ADMIN_EMAIL has no effect on it", async () => {
-  await withEnv({ ...ALL_VALID_ENV, ADMIN_EMAIL: "not-an-email" }, async () => {
-    const { smtpEnv } = await freshEnvModule();
-    const result = smtpEnv();
-    assert.equal(result.SMTP_PORT, 587);
+test("resendEnv() rejects a missing RESEND_API_KEY independent of ADMIN_EMAIL being malformed", async () => {
+  await withEnv({ ...ALL_VALID_ENV, RESEND_API_KEY: undefined, ADMIN_EMAIL: "not-an-email" }, async () => {
+    const { resendEnv } = await freshEnvModule();
+    assert.throws(() => resendEnv(), /RESEND_API_KEY/);
   });
 });
 
@@ -108,5 +102,12 @@ test("coreEnv() and paystackEnv() each validate independently", async () => {
     const { coreEnv, paystackEnv } = await freshEnvModule();
     assert.doesNotThrow(() => coreEnv());
     assert.throws(() => paystackEnv(), /Paystack/);
+  });
+});
+
+test("coreEnv() does not require DATABASE_URL — the running app reaches D1 via a binding, not a connection string", async () => {
+  await withEnv({ APP_URL: ALL_VALID_ENV.APP_URL, DATABASE_URL: undefined }, async () => {
+    const { coreEnv } = await freshEnvModule();
+    assert.doesNotThrow(() => coreEnv());
   });
 });

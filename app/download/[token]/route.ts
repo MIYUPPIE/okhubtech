@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { checkGrant } from "@/lib/delivery";
 import { resolveAssetSource } from "@/lib/variant";
 import { signedAssetUrl } from "@/lib/cloudinary";
@@ -11,6 +11,7 @@ import { signedAssetUrl } from "@/lib/cloudinary";
  */
 export async function GET(req: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
+  const prisma = getPrisma();
   const grant = await prisma.deliveryGrant.findUnique({
     where: { token },
     include: { order: { include: { variant: true } } },

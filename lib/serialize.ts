@@ -1,4 +1,4 @@
-import type { Product, Variant } from "@prisma/client";
+import type { Product, Variant } from "../generated/prisma-client/client";
 
 /**
  * What a buyer is allowed to see. Deliberately excludes cloudinaryPublicId

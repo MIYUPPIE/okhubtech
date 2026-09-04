@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/require-admin";
 
 export async function GET(req: Request) {
   const unauthorized = await requireAdmin();
   if (unauthorized) return unauthorized;
+  const prisma = getPrisma();
 
   const url = new URL(req.url);
   const take = Math.min(Number(url.searchParams.get("take") ?? 50) || 50, 200);

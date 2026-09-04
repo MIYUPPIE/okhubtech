@@ -1,12 +1,12 @@
-import type { Order } from "@prisma/client";
-import { prisma } from "./prisma.ts";
+import type { Order, PrismaClient } from "../generated/prisma-client/client";
+import { getPrisma } from "./prisma.ts";
 import { deliveryEnv } from "./env.ts";
 import { verifyTransaction } from "./paystack.ts";
 import { generateDownloadToken, downloadUrlFor } from "./delivery.ts";
 import { sendDeliveryEmail } from "./mailer.ts";
 import type { OrderStatus } from "./status.ts";
 
-async function createDeliveryGrant(orderId: string) {
+async function createDeliveryGrant(prisma: PrismaClient, orderId: string) {
   const e = deliveryEnv();
   const expiresAt = new Date(Date.now() + e.DOWNLOAD_TOKEN_TTL_HOURS * 60 * 60 * 1000);
   return prisma.deliveryGrant.create({
@@ -33,6 +33,7 @@ export type FulfillmentResult =
  * cannot.
  */
 export async function fulfillOrder(reference: string): Promise<FulfillmentResult> {
+  const prisma = getPrisma();
   const order = await prisma.order.findUnique({ where: { reference } });
   if (!order) return { outcome: "unknown_reference" };
 
@@ -72,7 +73,7 @@ export async function fulfillOrder(reference: string): Promise<FulfillmentResult
     data: { status: paidStatus, paidAt: verified.paidAt ? new Date(verified.paidAt) : new Date() },
   });
 
-  const grant = await createDeliveryGrant(order.id);
+  const grant = await createDeliveryGrant(prisma, order.id);
   const downloadUrl = downloadUrlFor(grant.token);
 
   if (order.deliveryMethod === "EMAIL") {

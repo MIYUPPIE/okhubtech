@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { coreEnv } from "@/lib/env";
 import { checkoutInputSchema, computeOrderAmountKobo, generateOrderReference } from "@/lib/checkout";
 import { initializeTransaction } from "@/lib/paystack";
@@ -12,6 +12,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid request", details: parsed.error.flatten() }, { status: 400 });
   }
   const input = parsed.data;
+  const prisma = getPrisma();
 
   const variant = await prisma.variant.findUnique({
     where: { id: input.variantId },

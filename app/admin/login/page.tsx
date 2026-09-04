@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { extractErrorMessage } from "@/lib/api-error";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -20,8 +21,8 @@ export default function AdminLoginPage() {
       body: JSON.stringify({ email, password }),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setError(typeof body?.error === "string" ? body.error : "Login failed");
+      const body = await res.json().catch(() => null);
+      setError(extractErrorMessage(body, "Login failed"));
       setSubmitting(false);
       return;
     }

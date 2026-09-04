@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { extractErrorMessage } from "@/lib/api-error";
 
 type Product = {
   id: string;
@@ -46,8 +47,8 @@ export default function ProductManager({ product, variants }: { product: Product
     });
     setSavingProduct(false);
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setProductError(typeof body?.error === "string" ? body.error : "Could not save");
+      const body = await res.json().catch(() => null);
+      setProductError(extractErrorMessage(body, "Could not save"));
       return;
     }
     router.refresh();
@@ -132,8 +133,8 @@ function VariantEditor({ variant, onChanged }: { variant: Variant; onChanged: ()
     });
     setSaving(false);
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setError(typeof body?.error === "string" ? body.error : "Could not save edition");
+      const body = await res.json().catch(() => null);
+      setError(extractErrorMessage(body, "Could not save edition"));
       return;
     }
     onChanged();
@@ -145,10 +146,8 @@ function VariantEditor({ variant, onChanged }: { variant: Variant; onChanged: ()
     const res = await fetch(`/api/admin/variants/${variant.id}`, { method: "DELETE" });
     setDeleting(false);
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setError(
-        typeof body?.error === "string" ? body.error : "Could not delete — deactivate it instead if it has orders.",
-      );
+      const body = await res.json().catch(() => null);
+      setError(extractErrorMessage(body, "Could not delete — deactivate it instead if it has orders."));
       return;
     }
     onChanged();
@@ -277,8 +276,8 @@ function NewVariantForm({ productId, onCreated }: { productId: string; onCreated
     });
     setSubmitting(false);
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setError(typeof body?.error === "string" ? body.error : "Could not create edition");
+      const body = await res.json().catch(() => null);
+      setError(extractErrorMessage(body, "Could not create edition"));
       return;
     }
     setName("");

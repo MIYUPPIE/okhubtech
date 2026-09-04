@@ -1,11 +1,12 @@
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import CheckoutForm from "./checkout-form";
 
 export const dynamic = "force-dynamic";
 
 export default async function VideoDetailPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
+  const prisma = getPrisma();
   const product = await prisma.product.findUnique({
     where: { slug },
     include: { variants: { where: { active: true }, orderBy: { priceKobo: "asc" } } },

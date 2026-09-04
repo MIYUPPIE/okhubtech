@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/require-admin";
 
 const createSchema = z.object({
@@ -14,6 +14,7 @@ const createSchema = z.object({
 export async function GET() {
   const unauthorized = await requireAdmin();
   if (unauthorized) return unauthorized;
+  const prisma = getPrisma();
   const products = await prisma.product.findMany({
     include: { variants: true },
     orderBy: { createdAt: "desc" },
@@ -29,6 +30,7 @@ export async function POST(req: Request) {
   const parsed = createSchema.safeParse(json);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
+  const prisma = getPrisma();
   const existing = await prisma.product.findUnique({ where: { slug: parsed.data.slug } });
   if (existing) return NextResponse.json({ error: "slug already in use" }, { status: 409 });
 

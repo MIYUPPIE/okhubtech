@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { formatMoney } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboardPage() {
+  const prisma = getPrisma();
   const [productCount, activeProductCount, orderCount, paidAgg] = await Promise.all([
     prisma.product.count(),
     prisma.product.count({ where: { active: true } }),

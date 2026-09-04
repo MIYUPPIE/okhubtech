@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { extractErrorMessage } from "@/lib/api-error";
 
 export default function NewProductForm() {
   const router = useRouter();
@@ -23,8 +24,8 @@ export default function NewProductForm() {
     });
     setSubmitting(false);
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setError(typeof body?.error === "string" ? body.error : "Could not create product");
+      const body = await res.json().catch(() => null);
+      setError(extractErrorMessage(body, "Could not create product"));
       return;
     }
     setSlug("");

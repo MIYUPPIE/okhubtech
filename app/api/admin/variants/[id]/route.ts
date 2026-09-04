@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/require-admin";
 import { nairaToKobo } from "@/lib/money";
 
@@ -19,6 +19,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const unauthorized = await requireAdmin();
   if (unauthorized) return unauthorized;
   const { id } = await params;
+  const prisma = getPrisma();
 
   const current = await prisma.variant.findUnique({ where: { id } });
   if (!current) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -48,6 +49,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const unauthorized = await requireAdmin();
   if (unauthorized) return unauthorized;
   const { id } = await params;
+  const prisma = getPrisma();
   const orderCount = await prisma.order.count({ where: { variantId: id } });
   if (orderCount > 0) {
     return NextResponse.json(

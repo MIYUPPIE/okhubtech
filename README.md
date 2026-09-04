@@ -7,9 +7,9 @@ gated post-payment delivery (instant download link or emailed link).
 This is a **separate, independently deployed service** from okhubtech.com.
 That site is a static HTML export with no server at all (see
 `../../docs/deployment.md`) — there is nowhere on it to run a checkout, a
-webhook, or a database. This service runs as a real Node process on its own
-host, and okhubtech.com only ever links out to it (see "Wiring it to the
-main site" below).
+webhook, or a database. This service deploys as a **Cloudflare Worker**
+(via `@opennextjs/cloudflare`, backed by Cloudflare D1), and okhubtech.com
+only ever links out to it (see "Wiring it to the main site" below).
 
 ## How a purchase works
 
@@ -40,17 +40,67 @@ result. See the tests in `tests/` for the properties this all leans on:
 webhook signature verification, grant expiry/use-count rules, and the
 "server decides the price, not the client" contract.
 
+## Why Cloudflare Workers, and what that constrains
+
+Workers is an edge V8-isolate runtime, not a persistent Node server: no
+local filesystem, no raw TCP sockets. Two real consequences, both already
+handled, worth knowing if you're changing anything here:
+
+- **Database is Cloudflare D1**, not a SQLite file — reached through a
+  binding (`wrangler.jsonc`'s `d1_databases`), not a `DATABASE_URL`
+  connection string. `lib/prisma.ts` constructs a fresh `PrismaClient` per
+  request from `getCloudflareContext().env.DB`, since there's no persistent
+  process to hold a singleton client on between requests.
+- **Email is Resend's HTTP API**, not SMTP — `lib/mailer.ts`. Nodemailer's
+  SMTP transport needs raw sockets Workers doesn't provide.
+
+**Prisma is pinned to 6.19.3, not the current 7.x.** Prisma 7 shipped a new
+WASM-based query compiler that does runtime `WebAssembly.compile()`, which
+Workers blocks outright (`CompileError: WebAssembly.Module(): Wasm code
+generation disallowed by embedder`) — a confirmed upstream regression,
+[prisma/prisma#28657](https://github.com/prisma/prisma/issues/28657), with
+6.19.x the last version documented to work here. The generator itself also
+matters: `prisma-client-js` (the old default) still tries to load a native
+query-engine binary at runtime even with the D1 adapter configured and
+fails with an OpenSSL-target mismatch; `prisma-client` with
+`runtime = "cloudflare"` (see `prisma/schema.prisma`) is what actually
+avoids that. Check that GitHub issue before ever bumping past this — if
+Prisma fixes the WASM problem, the schema's generator block and the pinned
+versions in `package.json` both need to move together, not just one.
+
 ## Local setup
+
+Two ways to run this locally, and they need different env files:
+
+**Plain `next dev`** (fast iteration, D1 access via local emulation through
+`initOpenNextCloudflareForDev()` in `next.config.ts`):
 
 ```bash
 npm install
 cp .env.example .env       # fill in real values — see below
-npm run prisma:migrate     # creates prisma/dev.db and applies migrations
-npm run seed:demo          # optional: one sample product to look at
-npm run dev                # http://localhost:4100
+npm run cf:types            # generates worker-configuration.d.ts from wrangler.jsonc
+npm run d1:migrations:apply:local
+npm run dev                 # http://localhost:4100
 ```
 
-Run `npm test` any time — it's offline and takes well under a second (42
+**The real Workers runtime** (`wrangler dev`, via OpenNext — closer to
+production, what actually caught the Prisma/WASM issues above):
+
+```bash
+cp .env.example .dev.vars   # same values, different file — Wrangler reads
+                             # .dev.vars, Next's own env loading reads .env
+npm run d1:migrations:apply:local
+npm run cf:preview          # builds, then serves on http://localhost:8787
+```
+
+Either way, run `npm run d1:migrations:apply:local` at least once first —
+both dev modes read from the same local D1 emulation
+(`.wrangler/state/v3/d1`), so the schema only needs applying once regardless
+of which one you use. `npm run seed:demo` adds one sample product straight
+into that same local D1 database via raw SQL (see "Database (Cloudflare
+D1)" below for why it's SQL and not a Prisma script).
+
+Run `npm test` any time — it's offline and takes well under a second (55
 gate tests, no network, no database).
 
 ### Environment variables
@@ -67,20 +117,57 @@ a real account rather than a placeholder:
   (see "Adding a video" below) — a variant using an external link doesn't
   need it, but the env schema (`lib/env.ts`) requires all three vars to be
   set regardless, since most catalogs will use both.
-- **`SMTP_*` / `EMAIL_FROM`** — needed for the "email it to me" delivery
-  method. Any standard SMTP provider works.
-- **`ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_SESSION_SECRET`** — one
-  operator account, no user table. Generate the session secret with
+- **`RESEND_API_KEY`** / **`EMAIL_FROM`** — needed for the "email it to me"
+  delivery method. [resend.com](https://resend.com) has a free tier.
+- **`ADMIN_EMAIL`** / **`ADMIN_PASSWORD`** / **`ADMIN_SESSION_SECRET`** —
+  one operator account, no user table. Generate the session secret with
   `openssl rand -hex 32`.
 
-`lib/env.ts` validates all of this at first use and throws a specific,
-readable error naming exactly which variable is missing or malformed —
-it will not let a route silently send a malformed request to Paystack.
+`lib/env.ts` validates these independently by feature area (core, Paystack,
+Cloudinary, Resend, admin, delivery) rather than as one all-or-nothing
+schema — logging into `/admin` only ever needs the `ADMIN_*` group, so an
+empty Cloudinary/Resend/Paystack config doesn't block it. Each group throws
+a specific, readable error naming exactly which variable is missing or
+malformed, scoped to the feature actually being used.
+
+**A `#` (or other dotenv-special character) in a value must be quoted** —
+`ADMIN_PASSWORD="correct-horse-battery-#staple"`, not bare. An unquoted `#`
+gets read as an inline comment by both Wrangler's `.dev.vars` parser and
+Next's own `.env` loading, silently truncating the value — this is exactly
+what broke admin login the first time through (login returned a clean 401,
+not an error pointing at the real cause), and it's very easy to hit again
+with a freshly generated password.
+
+## Database (Cloudflare D1)
+
+Two separate SQLite databases exist in this project, on purpose:
+
+- **`prisma/dev.db`** (or whatever `DATABASE_URL` in `.env` points at) —
+  local-only, used solely by Prisma CLI commands (`prisma generate`,
+  `prisma migrate dev`) to author new migration SQL when the schema
+  changes. Never deployed anywhere.
+- **Cloudflare D1** — what the actual app reads and writes, everywhere
+  (local emulation via `wrangler dev`, and the real thing once deployed).
+
+They're kept in sync by hand, not by tooling, because D1 doesn't support
+Prisma's own migrate engine (no shadow-database support over a binding):
+
+1. Edit `prisma/schema.prisma`.
+2. `DATABASE_URL="file:./prisma/dev.db" npx prisma migrate dev --name <change>`
+   — generates `prisma/migrations/<timestamp>_<change>/migration.sql`
+   against the throwaway local file.
+3. Copy that SQL into a new file under `migrations/` (Wrangler's own D1
+   migration directory, flat-numbered files — not the same directory or
+   format as `prisma/migrations/`): `npm run d1:migrations:create -- <change>`
+   scaffolds the numbered filename, then paste the SQL in.
+4. `npm run d1:migrations:apply:local` (dev) or `:remote` (production).
+
+`migrations/0001_init.sql` has a fuller comment on this same split.
 
 ## Adding a video to sell
 
 Go to `/admin` (prompts for the `ADMIN_EMAIL`/`ADMIN_PASSWORD` from your
-`.env`), create a product, then add one or more editions under it. For each
+env), create a product, then add one or more editions under it. For each
 edition, set a price and exactly one deliverable:
 
 - **Cloudinary asset** (recommended): upload the video to Cloudinary
@@ -105,88 +192,58 @@ snapshot pointing at nothing.
 
 ## Deploying
 
-### Docker (recommended)
+### First-time setup
 
 ```bash
-cp .env.example .env   # fill in real values on the server
-docker compose up -d --build
+npx wrangler login
+npx wrangler d1 create video-store
 ```
 
-`docker-compose.yml` mounts a named volume at `/app/data` and points
-`DATABASE_URL` there, so the SQLite file survives a rebuild.
-`docker-entrypoint.sh` runs `prisma migrate deploy` on every container start
-before starting the server — safe to do on every restart for a
-single-instance deploy like this one (it only applies migrations not
-already recorded).
-
-Put this behind a reverse proxy (Nginx, Caddy, Traefik) that terminates TLS
-and forwards to `127.0.0.1:4100` — Paystack's webhook must reach an `https://`
-URL. Then, in the Paystack dashboard, register
-`https://<your-domain>/api/webhooks/paystack` under Settings → API Keys &
-Webhooks.
-
-### Cloudflare DNS proxy in front of a VPS
-
-`docker-compose.prod.yml` + `Caddyfile` is exactly that reverse-proxy setup,
-prebuilt: Caddy terminates TLS on 80/443 and is the only thing published to
-the host; `video-store` itself isn't reachable from outside the container
-network at all. This is a **separate compose file** from the plain
-`docker-compose.yml` above (not an override), specifically so local/dev usage
-keeps working over plain HTTP on `:4100` exactly as it does today — the two
-are never meant to run against the same project/volumes at once.
+The second command prints a `database_id` — put it into `wrangler.jsonc`'s
+`d1_databases[0].database_id`, replacing the `REPLACE_WITH_REAL_D1_DATABASE_ID`
+placeholder. Then apply the schema to the real database:
 
 ```bash
-cp .env.example .env
-# edit .env: set APP_URL=https://<your domain>, plus PAYSTACK/CLOUDINARY/SMTP
-# edit Caddyfile: replace the placeholder domain with your real one
-docker compose -f docker-compose.prod.yml up -d --build
+npm run d1:migrations:apply:remote
 ```
 
-In Cloudflare's dashboard: DNS → A record for your domain pointing at the
-VPS's IP, proxied (orange cloud) on. SSL/TLS → **Full**, not **Flexible** —
-Flexible means the Cloudflare-to-VPS hop is plain HTTP, and this app carries
-admin login and Paystack webhook traffic over that hop. Caddy's self-signed
-cert (`tls internal` in the Caddyfile) is what Full mode talks to; see the
-comment in that file for the "Full (strict)" alternative if you want the
-origin cert chain validated too, which needs a Cloudflare Origin CA cert
-instead.
-
-On the VPS's own firewall (ufw/firewalld), only allow 80/443 in — Docker's
-default bridge networking already keeps `video-store` unreachable from
-outside the host in this compose file (`expose`, not `ports`), but a host
-firewall is standard hardening on top of that regardless.
-
-The admin login cookie's `Secure` flag is set from the request's actual
-scheme (`x-forwarded-proto`, which Caddy sets automatically when it proxies
-to `video-store`), not from `NODE_ENV` — so this correctly gets marked
-`Secure` once traffic is really arriving over HTTPS through Caddy, and
-correctly does *not* over the plain-HTTP `docker-compose.yml` setup above.
-Getting this backwards is exactly what silently breaks login: a `Secure`
-cookie set while testing directly over `http://` is dropped by the browser
-with no visible error, and `/admin` just bounces back to the login page.
-
-### Without Docker
-
-Any Node 22+ host works:
+Set every secret from `.env.example` on the actual Worker (repeat per
+variable — there's no bulk-upload command):
 
 ```bash
-npm ci
-npm run prisma:deploy   # applies migrations, does not touch dev.db
-npm run build
-npm start                # next start -p 4100
+npx wrangler secret put PAYSTACK_SECRET_KEY
+npx wrangler secret put CLOUDINARY_API_SECRET
+# ...and so on for every value in .env.example
 ```
 
-Put a process manager in front of it (`pm2`, `systemd`) so it restarts on
-crash and on boot.
+**`wrangler.jsonc`'s `name` must match the Worker name already configured
+on the Cloudflare dashboard for this project** (confirmed by a build log
+showing `Worker Name: okhubtech` — that's the value both `name` and the
+`WORKER_SELF_REFERENCE` service binding use here). If that Worker is ever
+renamed, both places in `wrangler.jsonc` have to change together — a
+mismatch there is exactly what broke the first deploy attempt: the
+interactive `@opennextjs/cloudflare migrate` wizard set `name` to the
+Cloudflare project's name but the self-reference binding to a different
+value derived from `package.json`, and the deploy failed with `Service
+binding 'WORKER_SELF_REFERENCE' references Worker 'video-store' which was
+not found`. (That binding is optional and this app doesn't actually hit the
+code paths that need it — a revalidation edge case, a queue fallback — but
+it's cheap to keep correct since it's declared either way.)
+
+### Deploy
+
+```bash
+npm run cf:deploy
+```
+
+Then in the Paystack dashboard, register
+`https://<your-worker-domain>/api/webhooks/paystack` under Settings → API
+Keys & Webhooks.
 
 ### Why not the same cPanel hosting as okhubtech.com
 
 That host serves static files only — no Node process can run there at all
-(see `../../docs/deployment.md`). This service needs a live server for
-checkout, the Paystack webhook, and gated downloads, so it needs an actual
-Node host: a small VPS, Render, Railway, Fly.io, or cPanel's Node.js
-Selector if the hosting plan has one. A VPS with the Docker setup above is
-the option this README assumes.
+(see `../../docs/deployment.md`).
 
 ## Wiring it to the main site
 
@@ -199,30 +256,29 @@ set, the section links to `/contact` instead of a placeholder URL.
 
 ## Before this goes live with real money
 
-- [ ] Swap `PAYSTACK_SECRET_KEY` from `sk_test_...` to the live key, and
-      register the **live** webhook URL in the Paystack dashboard (test and
-      live mode have separate webhook registrations).
+- [ ] Swap `PAYSTACK_SECRET_KEY` from `sk_test_...` to the live key
+      (`wrangler secret put PAYSTACK_SECRET_KEY` again), and register the
+      **live** webhook URL in the Paystack dashboard (test and live mode
+      have separate webhook registrations).
 - [ ] Run one real end-to-end purchase in Paystack **test mode** first —
       card checkout, webhook delivery, and the download link all actually
       landing — before flipping to live keys. `fulfillOrder`'s
       already-paid/amount-mismatch/not-successful branches are covered by
       unit tests on their component logic (signature verification, grant
-      expiry, price computation), but the full webhook-to-Paystack round
-      trip only exercises for real against Paystack's own sandbox.
-  - Checked once, on this build, against local test data by hand — see
-    the smoke-test notes in the PR/commit this shipped in for exactly what
-    was exercised (checkout validation, webhook signature accept/reject,
-    webhook idempotency including the retry-after-a-failed-attempt case,
-    the download gate's expiry and use-count enforcement, and the
-    already-paid success-page path). Not yet run against a live Paystack
-    test-mode transaction.
+      expiry, price computation), and the full stack (checkout validation,
+      admin CRUD against real D1, webhook signature accept/reject, the
+      download gate's expiry/use-count enforcement, the already-paid
+      success-page path) has been exercised by hand against
+      `wrangler dev`'s local D1 emulation — but not yet against a real
+      Paystack test-mode transaction landing on the deployed Worker.
 - [ ] Confirm the Cloudinary assets you intend to sell are set to
       **Authenticated** delivery, not public — a public asset's "signed" URL
       still leaks the permanent public one alongside it.
-- [ ] Set real values for every `.env.example` var in production, including
-      a freshly generated `ADMIN_SESSION_SECRET` (don't reuse a dev one).
-- [ ] Point a real domain at it over HTTPS — Paystack will not deliver
-      webhooks to plain HTTP.
+- [ ] Set every real secret via `wrangler secret put` (not just `.dev.vars`
+      locally), including a freshly generated `ADMIN_SESSION_SECRET` —
+      don't reuse a dev one, and remember to quote any value containing `#`
+      or other dotenv-special characters (see "Environment variables"
+      above).
 
 ## Project layout
 
@@ -235,6 +291,10 @@ app/
   admin/                       login + product/order management (own auth, own layout)
   api/                         checkout, webhook, product JSON, admin CRUD
 lib/                           all business logic — see each file's header comment
-prisma/schema.prisma           SQLite schema (see the note there on why no enums)
-tests/                         42 offline gate tests, node:test + node:assert, zero deps
+prisma/schema.prisma           schema (see the note there on why no enums, and the
+                                Prisma-version/generator pin for Cloudflare Workers)
+migrations/                    Wrangler's own D1 migration files (see "Database" above)
+wrangler.jsonc                 Worker config: D1 binding, name, compatibility flags
+open-next.config.ts            @opennextjs/cloudflare build config
+tests/                         55 offline gate tests, node:test + node:assert, zero deps
 ```

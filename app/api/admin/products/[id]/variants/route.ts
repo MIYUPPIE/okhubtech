@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/require-admin";
 import { nairaToKobo } from "@/lib/money";
 
@@ -23,6 +23,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const unauthorized = await requireAdmin();
   if (unauthorized) return unauthorized;
   const { id: productId } = await params;
+  const prisma = getPrisma();
 
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) return NextResponse.json({ error: "product not found" }, { status: 404 });

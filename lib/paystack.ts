@@ -3,6 +3,18 @@ import { paystackEnv } from "./env.ts";
 
 const BASE_URL = "https://api.paystack.co";
 
+// `Response.json()` types as `Promise<unknown>`, not `any` — this app never
+// validated Paystack's response shape at runtime either way, so this cast is
+// the same trust boundary as before, just typed honestly instead of
+// implicitly `any` (which is what let this compile without complaint until
+// a newer TypeScript lib target stopped treating `unknown` and `any` as
+// interchangeable here).
+type PaystackApiResponse<T> = {
+  status: boolean;
+  message?: string;
+  data?: T;
+};
+
 export type InitializeTransactionParams = {
   email: string;
   amountKobo: number;
@@ -39,8 +51,12 @@ export async function initializeTransaction(
       metadata: params.metadata ?? {},
     }),
   });
-  const body = await res.json();
-  if (!res.ok || !body.status) {
+  const body = (await res.json()) as PaystackApiResponse<{
+    authorization_url: string;
+    access_code: string;
+    reference: string;
+  }>;
+  if (!res.ok || !body.status || !body.data) {
     throw new Error(`Paystack initialize failed: ${body?.message ?? res.statusText}`);
   }
   return {
@@ -69,8 +85,16 @@ export async function verifyTransaction(reference: string): Promise<VerifyTransa
   const res = await fetch(`${BASE_URL}/transaction/verify/${encodeURIComponent(reference)}`, {
     headers: { Authorization: `Bearer ${paystackEnv().PAYSTACK_SECRET_KEY}` },
   });
-  const body = await res.json();
-  if (!res.ok || !body.status) {
+  const body = (await res.json()) as PaystackApiResponse<{
+    status: string;
+    reference: string;
+    amount: number;
+    currency: string;
+    paid_at: string | null;
+    customer?: { email?: string };
+    id: number;
+  }>;
+  if (!res.ok || !body.status || !body.data) {
     throw new Error(`Paystack verify failed: ${body?.message ?? res.statusText}`);
   }
   const d = body.data;

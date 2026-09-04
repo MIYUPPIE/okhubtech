@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/require-admin";
 
 const updateSchema = z.object({
@@ -14,6 +14,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const unauthorized = await requireAdmin();
   if (unauthorized) return unauthorized;
   const { id } = await params;
+  const prisma = getPrisma();
   const product = await prisma.product.findUnique({ where: { id }, include: { variants: true } });
   if (!product) return NextResponse.json({ error: "not found" }, { status: 404 });
   return NextResponse.json({ product });
@@ -23,6 +24,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const unauthorized = await requireAdmin();
   if (unauthorized) return unauthorized;
   const { id } = await params;
+  const prisma = getPrisma();
   const json = await req.json().catch(() => null);
   const parsed = updateSchema.safeParse(json);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
@@ -35,6 +37,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const unauthorized = await requireAdmin();
   if (unauthorized) return unauthorized;
   const { id } = await params;
+  const prisma = getPrisma();
   const orderCount = await prisma.order.count({ where: { variant: { productId: id } } });
   if (orderCount > 0) {
     return NextResponse.json(
